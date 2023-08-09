@@ -80,21 +80,47 @@ export function sampleRUM(checkpoint, data = {}) {
 
 /**
  * Loads a CSS file.
- * @param {string} href The path to the CSS file
+ * @param {string} href URL to the CSS file
  */
-export function loadCSS(href, callback) {
-  if (!document.querySelector(`head > link[href="${href}"]`)) {
-    const link = document.createElement('link');
-    link.setAttribute('rel', 'stylesheet');
-    link.setAttribute('href', href);
-    if (typeof callback === 'function') {
-      link.onload = (e) => callback(e.type);
-      link.onerror = (e) => callback(e.type);
+export async function loadCSS(href) {
+  return new Promise((resolve, reject) => {
+    if (!document.querySelector(`head > link[href="${href}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = href;
+      link.onload = resolve;
+      link.onerror = reject;
+      document.head.append(link);
+    } else {
+      resolve();
     }
-    document.head.appendChild(link);
-  } else if (typeof callback === 'function') {
-    callback('noop');
-  }
+  });
+}
+
+/**
+ * Loads a non module JS file.
+ * @param {string} src URL to the JS file
+ * @param {Object} attrs additional optional attributes
+ */
+
+export async function loadScript(src, attrs) {
+  return new Promise((resolve, reject) => {
+    if (!document.querySelector(`head > script[src="${src}"]`)) {
+      const script = document.createElement('script');
+      script.src = src;
+      if (attrs) {
+      // eslint-disable-next-line no-restricted-syntax, guard-for-in
+        for (const attr in attrs) {
+          script.setAttribute(attr, attrs[attr]);
+        }
+      }
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    } else {
+      resolve();
+    }
+  });
 }
 
 /**
@@ -156,9 +182,17 @@ export async function decorateIcons(element) {
           return;
         }
         // Styled icons don't play nice with the sprite approach because of shadow dom isolation
+        // and same for internal references
         const svg = await response.text();
-        if (svg.match(/(<style | class=)/)) {
-          ICONS_CACHE[iconName] = { styled: true, html: svg };
+        if (svg.match(/(<style | class=|url\(#| xlink:href="#)/)) {
+          ICONS_CACHE[iconName] = {
+            styled: true,
+            html: svg
+              // rescope ids and references to avoid clashes across icons;
+              .replaceAll(/ id="([^"]+)"/g, (_, id) => ` id="${iconName}-${id}"`)
+              .replaceAll(/="url\(#([^)]+)\)"/g, (_, id) => `="url(#${iconName}-${id})"`)
+              .replaceAll(/ xlink:href="#([^"]+)"/g, (_, id) => ` xlink:href="#${iconName}-${id}"`),
+          };
         } else {
           ICONS_CACHE[iconName] = {
             html: svg
@@ -176,7 +210,12 @@ export async function decorateIcons(element) {
     }
   }));
 
-  const symbols = Object.values(ICONS_CACHE).filter((v) => !v.styled).map((v) => v.html).join('\n');
+  const symbols = Object
+    .keys(ICONS_CACHE).filter((k) => !svgSprite.querySelector(`#icons-sprite-${k}`))
+    .map((k) => ICONS_CACHE[k])
+    .filter((v) => !v.styled)
+    .map((v) => v.html)
+    .join('\n');
   svgSprite.innerHTML += symbols;
 
   icons.forEach((span) => {
@@ -399,9 +438,7 @@ export async function loadBlock(block) {
     block.dataset.blockStatus = 'loading';
     const { blockName } = block.dataset;
     try {
-      const cssLoaded = new Promise((resolve) => {
-        loadCSS(`${window.hlx.codeBasePath}/blocks/${blockName}/${blockName}.css`, resolve);
-      });
+      const cssLoaded = loadCSS(`${window.hlx.codeBasePath}/blocks/${blockName}/${blockName}.css`);
       const decorationComplete = new Promise((resolve) => {
         (async () => {
           try {
@@ -623,7 +660,6 @@ export function setup() {
  * Auto initializiation.
  */
 function init() {
-  document.body.style.display = 'none';
   setup();
   sampleRUM('top');
 
